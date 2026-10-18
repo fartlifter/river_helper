@@ -151,7 +151,7 @@ if st.session_state.wire_articles:
     for idx, art in enumerate(st.session_state.wire_articles):
         matched = art.get('matched_kw', [])
         with st.expander(f"{art['source']} | {art['title']}"):
-            checked = st.checkbox("이 기사 선택", key=f"w_chk_{idx}", value=True)
+            checked = st.checkbox("이 기사 선택", key=f"w_chk_{idx}")
             st.markdown(f"[🔗 원문 링크]({art['url']})")
             st.caption(f"{art['datetime'].strftime('%Y-%m-%d %H:%M')} | **일치 키워드:** {', '.join(matched) if matched else '없음'}")
             
@@ -169,7 +169,7 @@ if st.session_state.naver_articles:
     for idx, art in enumerate(st.session_state.naver_articles):
         matched = art.get('matched_kw', [])
         with st.expander(f"[{art['media']}] {art['title']}"):
-            checked = st.checkbox("이 기사 선택", key=f"n_chk_{idx}", value=True)
+            checked = st.checkbox("이 기사 선택", key=f"n_chk_{idx}")
             st.markdown(f"[🔗 원문 링크]({art['url']})")
             st.caption(f"{art['datetime'].strftime('%Y-%m-%d %H:%M')} | **일치 키워드:** {', '.join(matched) if matched else '없음'}")
             
