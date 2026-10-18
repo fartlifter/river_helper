@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -10,7 +11,6 @@ def build_system_instruction(current_dt: datetime, report_type: str = "오전보
     c_month = current_dt.month
     c_day = current_dt.day
 
-    # 오전보고/오후보고/저녁보고 문패 및 접두어 분기
     is_morning = "오전" in report_type
     main_header = "<오전보고>" if is_morning else ("<오후보고>" if "오후" in report_type else "<저녁보고>")
     title_prefix = "" if is_morning else "보고/"
@@ -21,44 +21,62 @@ def build_system_instruction(current_dt: datetime, report_type: str = "오전보
 * 현재 기준 시점: {c_year}년 {c_month}월 {c_day}일
 * 보고 유형: {main_header}
 
-[1. 전체 보고서 레이아웃 구조 (필수)]
-결과는 반드시 아래 순서와 섹션 구조를 지켜 출력하십시오:
-
+[1. 전체 보고서 구조 및 절대 금지 규칙]
+- 출력 시작은 반드시 `{main_header}` 문패로 시작한다.
+- 섹션 구성 순서:
 {main_header}
 
-(통신 기사 요약 목록)
+(통신 기사 요약)
 
 <참고>
 
 <일정>
 
 <타사>
-(타사 단독 기사 요약 목록)
+(타사 단독 기사 요약)
 
-※ <참고>와 <일정> 섹션 아래는 기자가 직접 일정을 채워 넣을 수 있도록 내용을 비워 둡니다.
+- 절대 주의: '(통신 기사 요약 목록)', '(타사 단독 기사 요약 목록)', '여기에 작성' 등과 같은 괄호 설명문이나 안내용 플레이스홀더 문구를 절대 출력하지 마십시오. 오직 실제 기사 요약 내용만 나옵니다.
+- 기사가 없는 경우 해당 자리는 그냥 비워두되 설명 문구를 넣지 마십시오.
+- <참고>와 <일정> 아래는 기자가 직접 입력하므로 내용을 채우지 않고 헤더만 비워둡니다.
 
-[2. 기사 제목 작성 규칙]
+[2. 하이픈(-) 및 공백 규칙 (필수 준수)]
+- 본문 요약의 모든 문단 시작 기호인 하이픈(-) 바로 뒤에는 절대 띄어쓰기(공백)를 넣지 않는다.
+- 반드시 `-문장시작` 형태로 붙여서 작성한다. (예: `-서울시교육청, 19일`, `-17일 밤 경남`)
+- 잘못된 예: `- 서울시교육청` (X)
+- 올바른 예: `-서울시교육청` (O)
+
+[3. 기사 제목 작성 규칙]
 ① 일반 통신사 기사 제목:
-   - 형식: `*{title_prefix}제목(발제매수, 조간용·석간용)`
+   - 형식: `*{title_prefix}기사제목(발제매수, 조간용·석간용)`
    - 중요: `(발제매수, 조간용·석간용)` 문구는 기자가 직접 수정할 수 있도록 반드시 이 텍스트 그대로 기재하십시오. (예: `*{title_prefix}서울시 9호선 급행 늘려 혼잡도 20% 낮춘다(발제매수, 조간용·석간용)`)
 ② <타사> 단독 기사 제목:
-   - 형식: `*{title_prefix}[단독] 제목(매체명)`
+   - 형식: `*{title_prefix}[단독] 기사제목(매체명)`
    - 예시: `*{title_prefix}[단독] 한강버스 외국인 탑승객 통계도 없다(쿠키)`
-③ 제목 교정:
-   - 일자형 따옴표(" ')는 정자 따옴표(“ ” ‘ ’)로 변환합니다.
-   - 불필요한 금액 쉼표는 한글 단위로 규격화합니다. (예: 1,000억원 -> 1000억원)
+③ 따옴표 및 숫자 교정:
+   - 일자형 따옴표(" ')는 반드시 정자 따옴표(“ ” ‘ ’)로 변환한다.
+   - 금액의 쉼표(,)를 제거하고 한글 단위를 활용한다. (예: 1,000억원 -> 1000억원, 7,500만원 -> 7500만원)
 
-[3. 본문 요약 구조 및 문체 규칙 (핵심)]
-① 문단 구분:
-   - 기사 내용은 하이픈(-)으로 문단을 구분하여 작성합니다.
-   - 반드시 `-` 기호 하나당 문장은 최대 3개 이내로 구성하십시오. 기사 1건당 `-` 문단은 2~4개 내외로 배치합니다.
+[4. 본문 요약 및 개조식 문체 규칙]
+① 문단 구성:
+   - 각 기사는 `-` 기호로 시작하는 문단으로 구성하되, `-` 하나당 문장은 최대 3개 이내로 작성한다.
+   - 기사 1건당 `-` 문단은 핵심 사실 위주로 2~4개로 작성한다.
 ② 개조식 문체 & 조사 생략:
-   - 조사는 의미 전달을 해치지 않는 선에서 최대한 생략합니다.
-   - 서술어는 종결어미(~다, ~했습니다)를 쓰지 않고 명사형 어근 종결(~밝힘, ~예정, ~강조, ~설명, ~지적, ~추진 등)을 사용합니다.
-③ 날짜 및 시점 규칙:
-   - 당월({c_month}월) 내 일자는 '월' 없이 일자만 표기 (예: 14일, 15일)
-   - 전언 시점(예: "15일 취재에 따르면")과 실제 사건 발생 시점을 엄격히 구분하여 작성.
+   - 주어 및 명사 뒤 조사를 의미 전달에 지장이 없는 선에서 최대한 생략한다.
+   - 종결어미(~다, ~했습니다)를 지양하고 명사형 어근(~밝힘, ~예정, ~강조, ~설명, ~지적, ~추진 등)으로 마무리한다.
+③ 날짜 표기:
+   - 당월({c_month}월) 내 일자는 '월' 없이 일자만 표기한다. (예: 17일, 19일)
 """
+
+def clean_summary_output(text: str) -> str:
+    # 안내용 플레이스홀더 문구 제거
+    text = re.sub(r"\((통신\s*기사\s*요약(\s*목록)?\vert{}타사\s*단독\s*기사\s*요약(\s*목록)?)\)", "", text)
+    
+    # 하이픈(-) 바로 뒤 공백 제거: "- 내용" -> "-내용"
+    text = re.sub(r"^-\s+", "-", text, flags=re.MULTILINE)
+    
+    # 3개 이상 연속된 빈 줄을 최대 2개 줄바꿈으로 정리
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 def summarize_with_gemini(raw_report_text: str, report_type: str = "오전보고", api_keys: list = None) -> str:
     if not api_keys:
@@ -79,27 +97,4 @@ def summarize_with_gemini(raw_report_text: str, report_type: str = "오전보고
         for attempt in range(2):
             try:
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=raw_report_text,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.1
-                    )
-                )
-                cleaned = response.text.strip()
-                return cleaned
-
-            except Exception as e:
-                err_str = str(e)
-                last_err = e
-                
-                if "503" in err_str or "UNAVAILABLE" in err_str:
-                    time.sleep(2.5 * (attempt + 1))
-                    continue
-                elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    time.sleep(1)
-                    break
-                else:
-                    raise e
-
-    raise last_err
+                    model="gemini
