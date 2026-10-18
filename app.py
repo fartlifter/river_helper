@@ -41,7 +41,7 @@ div[data-testid="stCode"] code {
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📰 강민이의 보고를 돕습니다")
+st.title("📰 서울시·행안부 보고생성기 For River")
 
 now = datetime.now(ZoneInfo("Asia/Seoul"))
 
