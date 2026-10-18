@@ -1,28 +1,50 @@
 import html
 import re
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 from bs4 import BeautifulSoup
 
-KEYWORD_GROUPS = {
-    '법원': ['서울중앙지법','서울고법','대법원','헌법재판소','대한변호사협회','서울지방변호사회','한국여성변호사회',
-          '서울행정법원','서울가정법원','서울회생법원','법원행정처','특허법원','법무법인'],
-    '검찰': ['서울중앙지검','서울고검','대검찰청','법무부','특검','고위공직자범죄수사처','합동수사본부','중수청','공소청','검찰','법제처']
-}
+# 지정 출입처 키워드 목록
+CITY_KEYWORDS = [
+    "서울시", "행정안전부", "인사혁신처", "소방청", "개인정보보호위원회",
+    "강남구", "강동구", "강북구", "강서구", "관악구", "광진구", "금천구", "구로구",
+    "노원구", "도봉구", "동대문구", "동작구", "마포구", "서대문구", "서초구",
+    "성동구", "성북구", "송파구", "양천구", "영등포구", "용산구", "은평구",
+    "종로구", "중구", "중랑구", "서울교통공사", "서울교통공사노조", "버스노조"
+]
+
+# 보고 시간대 프리셋 계산 함수
+def get_report_timerange(report_type: str, target_date: datetime.date = None):
+    tz = ZoneInfo("Asia/Seoul")
+    today = target_date or datetime.now(tz).date()
+
+    ranges = {
+        "오전보고": (time(0, 0), time(9, 30)),
+        "오후보고": (time(9, 0), time(13, 20)),
+        "저녁보고1": (time(13, 0), time(17, 0)),
+        "저녁보고2": (time(16, 30), time(19, 0)),
+    }
+
+    if report_type not in ranges:
+        raise ValueError(f"지원하지 않는 보고 유형입니다: {report_type}")
+
+    t_start, t_end = ranges[report_type]
+    start_dt = datetime.combine(today, t_start).replace(tzinfo=tz)
+    end_dt = datetime.combine(today, t_end).replace(tzinfo=tz)
+    return start_dt, end_dt
 
 MEDIA_MAPPING = {
     "chosun": "조선", "joongang": "중앙", "donga": "동아", "hani": "한겨레",
     "khan": "경향", "hankookilbo": "한국", "segye": "세계", "seoul": "서울",
     "kmib": "국민", "munhwa": "문화", "kbs": "KBS", "sbs": "SBS", "mbn.co": "MBN",
     "imnews": "MBC", "jtbc": "JTBC", "ichannela": "채널A", "tvchosun": "TV조선",
-    "mk": "매경", "sedaily": "서경", "hankyung": "한경", "news1": "뉴스1", "www.pressian": "프레시안",
-    "newsis": "뉴시스", "yna": "연합", "mt": "머투", "weekly": "주간조선", "www.imaeil": "매일신문",
-    "biz.chosun": "조선비즈", "fnnews": "파뉴", "etoday.co": "이투데이", "edaily.co": "이데일리", "tf.co": "더팩트",
-    "yonhapnewstv.co": "연뉴TV", "ytn.co": "YTN", "nocutnews.co": "노컷", "asiae.co": "아경", "biz.heraldcorp": "헤경",
-    "www.sisajournal": "시사저널", "www.ohmynews": "오마이", "dailian.co": "데일리안", "ilyo.co": "일요신문", "sisain.co": "시사IN",
-    "lawtimes": "법률신문"
+    "mk": "매경", "sedaily": "서경", "hankyung": "한경", "news1": "뉴스1",
+    "newsis": "뉴시스", "yna": "연합", "mt": "머투", "fnnews": "파뉴",
+    "etoday.co": "이투데이", "edaily.co": "이데일리", "tf.co": "더팩트",
+    "yonhapnewstv.co": "연뉴TV", "ytn.co": "YTN", "nocutnews.co": "노컷",
+    "asiae.co": "아경", "biz.heraldcorp": "헤경", "kukinews": "쿠키"
 }
 
 EXCLUSIVE_PATTERN = re.compile(r"(\[|\(|\【|\<|\xdb|\ⓧ)?\s*단\s*독\s*(\]|\)|\】|\>|\=|\:|\s|$|\])", re.IGNORECASE)
@@ -41,22 +63,21 @@ def get_content(client: httpx.Client, url: str, selector: str) -> str:
     except:
         return ""
 
-def fetch_articles_concurrently(article_list, selector, selected_keywords, progress_callback=None, source_name=""):
+def fetch_articles_concurrently(article_list, selector, selected_keywords=None, progress_callback=None, source_name=""):
+    keywords = selected_keywords if selected_keywords is not None else CITY_KEYWORDS
     results = []
     total = len(article_list)
     if total == 0:
         return results
 
-    # 공용 커넥션 풀을 활용해 반복 연결 비용 제거
     limits = httpx.Limits(max_keepalive_connections=35, max_connections=40)
     with httpx.Client(timeout=6.0, limits=limits) as shared_client:
         def worker(art):
             content = get_content(shared_client, art['url'], selector)
             if not content:
                 return None
-            # 본문 전체 키워드 대조 (누락 위험 방지)
-            matched = [kw for kw in selected_keywords if kw in content]
-            if selected_keywords and not matched:
+            matched = [kw for kw in keywords if kw in content or kw in art.get('title', '')]
+            if keywords and not matched:
                 return None
             art['content'] = content
             art['matched_kw'] = matched
@@ -72,16 +93,16 @@ def fetch_articles_concurrently(article_list, selector, selected_keywords, progr
                 except:
                     pass
                 if progress_callback:
-                    progress_callback((i + 1) / total, f"[{source_name}] 본문 키워드 대조 중... ({i+1}/{total}건)")
+                    progress_callback((i + 1) / total, f"[{source_name}] 키워드 대조 중... ({i+1}/{total}건)")
 
     results.sort(key=lambda x: x["datetime"], reverse=True)
     return results
 
-def parse_yonhap(start_dt, end_dt, selected_keywords, progress_callback=None):
+def parse_yonhap(start_dt, end_dt, selected_keywords=None, progress_callback=None):
     collected = []
     page = 1
     past_streak = 0
-    MAX_PAST_STREAK = 5  # 송고 역전으로 인한 누락 방지 (연속 5건 이상 과거 시각일 때만 종료)
+    MAX_PAST_STREAK = 5
 
     if progress_callback:
         progress_callback(0.0, "🔍 [연합뉴스] 기사 목록 탐색 중...")
@@ -114,7 +135,6 @@ def parse_yonhap(start_dt, end_dt, selected_keywords, progress_callback=None):
                 except:
                     continue
 
-                # 시작 시각보다 과거 기사인 경우 즉시 튕기지 않고 스트릭 카운트
                 if dt < start_dt:
                     past_streak += 1
                     if past_streak >= MAX_PAST_STREAK:
@@ -123,7 +143,6 @@ def parse_yonhap(start_dt, end_dt, selected_keywords, progress_callback=None):
                 else:
                     past_streak = 0
 
-                # 지정 시간 범위 내 기사는 전부 수집 후보로 보존 (제목 필터링 없이 전수 수집)
                 if start_dt <= dt <= end_dt:
                     collected.append({
                         "source": "연합뉴스",
@@ -136,11 +155,11 @@ def parse_yonhap(start_dt, end_dt, selected_keywords, progress_callback=None):
 
     return fetch_articles_concurrently(collected, "div.story-news.article", selected_keywords, progress_callback, "연합뉴스")
 
-def parse_newsis(start_dt, end_dt, selected_keywords, progress_callback=None):
+def parse_newsis(start_dt, end_dt, selected_keywords=None, progress_callback=None):
     collected = []
     page = 1
     past_streak = 0
-    MAX_PAST_STREAK = 5  # 송고 역전으로 인한 누락 방지
+    MAX_PAST_STREAK = 5
 
     if progress_callback:
         progress_callback(0.0, "🔍 [뉴시스] 기사 목록 탐색 중...")
@@ -172,7 +191,6 @@ def parse_newsis(start_dt, end_dt, selected_keywords, progress_callback=None):
 
                 dt = datetime.strptime(match.group(), "%Y.%m.%d %H:%M:%S").replace(tzinfo=ZoneInfo("Asia/Seoul"))
 
-                # 시작 시각보다 과거 기사인 경우 즉시 튕기지 않고 스트릭 카운트
                 if dt < start_dt:
                     past_streak += 1
                     if past_streak >= MAX_PAST_STREAK:
@@ -181,7 +199,6 @@ def parse_newsis(start_dt, end_dt, selected_keywords, progress_callback=None):
                 else:
                     past_streak = 0
 
-                # 지정 시간 범위 내 기사는 전부 수집 후보로 보존 (제목 필터링 없이 전수 수집)
                 if start_dt <= dt <= end_dt:
                     collected.append({
                         "source": "뉴시스",
@@ -200,10 +217,7 @@ def naver_extract_title_and_body_fast(client: httpx.Client, url: str):
         if res.status_code != 200:
             return None, None
         soup = BeautifulSoup(res.text, "html.parser")
-        if "www.lawtimes.co.kr/news" in url:
-            title_tag = soup.find("h1", class_="heading")
-            content_div = soup.find("article", id="article-view-content-div")
-        elif "n.news.naver.com" in url:
+        if "n.news.naver.com" in url:
             title_tag = soup.find("div", class_="media_end_head_title")
             content_div = soup.find("div", id="newsct_article")
         else:
@@ -228,7 +242,8 @@ def naver_extract_media_name(url):
     except:
         return "기타"
 
-def parse_naver_exclusive(start_dt, end_dt, selected_keywords, client_id, client_secret, progress_callback=None):
+def parse_naver_exclusive(start_dt, end_dt, selected_keywords=None, client_id="", client_secret="", progress_callback=None):
+    keywords = selected_keywords if selected_keywords is not None else CITY_KEYWORDS
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
     seen_links = set()
     candidate_items = []
@@ -239,7 +254,6 @@ def parse_naver_exclusive(start_dt, end_dt, selected_keywords, client_id, client
     steps = list(range(1, 1001, 100))
     total_steps = len(steps)
 
-    # 1. API 검색 단계 (커넥션 풀 유지)
     with httpx.Client(timeout=5.0) as api_client:
         for idx, start_index in enumerate(steps):
             if should_stop:
@@ -291,7 +305,6 @@ def parse_naver_exclusive(start_dt, end_dt, selected_keywords, client_id, client
     all_articles = []
     total_candidates = len(candidate_items)
 
-    # 2. 본문 크롤링 단계 (단일 공용 Client로 연결 재사용 극대화)
     limits = httpx.Limits(max_keepalive_connections=35, max_connections=40)
     with httpx.Client(timeout=4.5, limits=limits) as shared_fetch_client:
         def process_candidate(candidate):
@@ -302,18 +315,18 @@ def parse_naver_exclusive(start_dt, end_dt, selected_keywords, client_id, client
             if not title or not body:
                 return None
 
-            # 본문 전체 키워드 대조 (제목 누락 위험 원천 배제)
-            matched_kw = [kw for kw in selected_keywords if kw in body]
-            if selected_keywords and not matched_kw:
+            # 본문 또는 제목 키워드 매칭
+            matched_kw = [kw for kw in keywords if kw in body or kw in title]
+            if keywords and not matched_kw:
                 return None
 
             media = naver_extract_media_name(item.get("originallink", ""))
             clean_title = re.sub(r"\[단독\]|\(단독\)|【단독】|ⓧ단독|^단독\s*[:-]?", "", title).strip()
 
             return {
-                "매체": media,
+                "source": "단독",
+                "media": media,
                 "title": clean_title,
-                "raw_title": title,
                 "datetime": pub_dt,
                 "content": body,
                 "url": link,
